@@ -1,0 +1,291 @@
+---
+title: "Stroke_prediction"
+author: "Yuraza_Qadri"
+date: "2023-04-09"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+```{r}
+#Installed Required library
+
+require(tidyverse)
+require(tidymodels)
+library(dplyr)
+library(skimr)
+library(gapminder)
+require(ggplot2)
+library(ggridges)
+```
+
+
+
+```{r}
+# Load the data
+stroke_data <- read.csv("C:/Users/Lenovo/Downloads/Milliman Task-1/stroke_data.csv")
+
+# View the first few rows of the data
+head(stroke_data)
+
+# Get the summary statistics for the data
+summary(stroke_data)
+
+# Check the Glimpse of the data
+glimpse(stroke_data)
+
+#Removing ID variable because it contains unique values.
+stroke_data=stroke_data%>%select(-id)
+```
+
+```{r}
+# Step-1 Data Cleaning
+
+# I have check Column names in Excel and it looks good.
+
+#Covert age variable from double to integer 
+stroke_data$age <- as.integer(stroke_data$age)
+
+# Select the numerical columns for box plot
+num_cols <- c("age", "metric_1", "metric_2", "metric_3", "metric_4", "metric_5")
+
+# Create the box plot
+boxplot(stroke_data[, num_cols], 
+        main = "Box Plot of Numerical Columns",
+        xlab = "Column Names",
+        ylab = "Values")
+
+```
+
+```{r}
+# Create box plot for metric_1 as there are some outliers
+boxplot(stroke_data$metric_1, 
+        main = "Box Plot of Metric_1",
+        xlab = "Metric_1",
+        ylab = "Values")
+
+# Create box plot for metric_5 as there are some outliers
+boxplot(stroke_data$metric_5, 
+        main = "Box Plot of Metric_5",
+        xlab = "Metric_5",
+        ylab = "Values")
+
+
+# But after plotting the box plot separately Metric 1 is glucose in blood and metric 5 is Blood pressure, henced the values can be kept. 
+
+```
+
+
+
+```{r}
+#Using Skim we can see the missingness or each columns in the dataset and we can see metric 2 which is BMI has 1426 missing columns we cannot remove all the columns as the number of columns are high so we need to check should we change it with mean or median.
+#for that we have to check the skewness of data.
+skim(stroke_data)
+```
+
+```{r}
+# As the data is normally distributed we can replace it with mean.
+# Create a histogram of metric_2
+hist(stroke_data$metric_2, main = "Histogram of Metric_2")
+
+```
+
+
+```{r}
+# here we are replacing the missing value in metric 2 with mean.
+
+# Calculate the mean of metric_2
+mean_metric_2 <- mean(stroke_data$metric_2, na.rm = TRUE)
+
+# Replace missing values in metric_2 with the mean
+stroke_data$metric_2[is.na(stroke_data$metric_2)] <- mean_metric_2
+```
+
+
+```{r}
+#here we can see that there are no missing values
+skim(stroke_data)
+```
+
+```{r}
+# step-2 Data Splitting
+set.seed(321)
+# Create a split object
+stroke_split <- initial_split(stroke_data, prop = 0.80, 
+                             strata = stroke)
+
+# Build training data set
+stroke_training <- stroke_split %>% 
+                  training()
+
+# Build testing data set
+stroke_testing <- stroke_split %>% 
+              testing()
+
+```
+
+```{r}
+#Step-3 Feature Engineering
+
+#Creating Recipe
+
+#Creating Recipe step_YeoJohnson: This step applies the Yeo-Johnson transformation to all numeric features to transform them into a more normally distributed form.
+#step_dummy: This step creates dummy variables for all nominal features to enable the use of these categorical features in machine learning models.
+#step_nzv: This step removes predictors that have no or very low variance across the samples. This is done to remove features that are not informative or that might cause overfitting.
+
+stroke_training$stroke <- as.factor(stroke_training$stroke)
+stroke_testing$stroke <- as.factor(stroke_testing$stroke)
+
+Stroke_main<-recipe(stroke~ age,	hypertension,	heart_disease,	occupation,	residence	,metric_1	,metric_2,	metric_3,	metric_4	,metric_5	,smoking_status, stroke_training  ,data=stroke_training, family='binomial')%>%
+          step_YeoJohnson(all_numeric(), - all_outcomes()) %>% ##
+          step_dummy(all_nominal(), -all_outcomes()) %>%
+          step_nzv(all_predictors())
+
+```
+
+
+#Step-4  Model fitting
+```{r}
+
+# Here we are preparing and baking the recipe and setting the model and creating workflow and fitting the model.
+Stroke_main %>% 
+  prep() %>% 
+  bake(new_data = stroke_testing)
+
+lr_mod<-logistic_reg()%>%
+        set_engine('glm')
+
+
+stroke_workflow<-workflow()%>%
+                  add_model(lr_mod)%>%
+                  add_recipe(Stroke_main)
+
+stroke_fit <- stroke_workflow %>% 
+             fit(data=stroke_testing)
+
+```
+
+#Step-5 Testing model
+
+
+```{r}
+# Here we comparing our predicted values with testing dataset.
+# Here we are testing our model with test data .
+# Here We train our model with test data set the 20% of actual data set.
+
+predict(stroke_fit, stroke_testing)%>%
+                bind_cols(stroke_testing%>%select(stroke))
+```
+
+```{r}
+#Here we are predicting person who have stroke which is 1 and person who doesn't have stroke which is 0 
+
+stroke_predictions<-predict(stroke_fit, stroke_testing, type ="prob")%>%
+                bind_cols(stroke_testing%>%select(stroke))
+stroke_predictions
+```
+
+
+```{r}
+tidy(stroke_fit)
+```
+
+```{r}
+
+# Confussion Matrix is poltted below: 
+
+# As you can see there are no type 2 errors which are false negative and there are 156 false positive errors which means 
+
+stroke_predictions1 <-predict(stroke_fit, stroke_testing)%>%
+                bind_cols(stroke_testing%>%select(stroke))
+
+stroke_predictions1%>%table()
+```
+
+```{r}
+
+#Here we are checking the accuracy which is 98% accurate model
+
+#install.packages("caret")
+library(caret)
+
+predictions = predict(stroke_fit, stroke_testing)%>%
+                bind_cols(stroke_testing%>%select(stroke))
+predictions%>%conf_mat(truth=stroke, .pred_class)
+
+caret::confusionMatrix(predictions$.pred_class,predictions$stroke)
+```
+```{r}
+#Step-6 Evaluating model  
+
+# As much as area is there under the line the model is more accurate.
+
+stroke_predictions %>%
+  roc_curve(
+    truth = stroke, 
+    .pred_0,
+    event_level = "first"
+  )%>%
+  autoplot()
+
+```
+
+
+
+
+```{r}
+
+#Plotting the area in number which is 85%.
+
+stroke_predictions %>%
+  roc_auc(
+    truth = stroke, 
+    .pred_0,
+    event_level = "first")
+ 
+```
+
+##########################################################################################################################
+
+
+
+#Trying to improve the above model.
+
+
+```{r}
+
+# Define the cross-validation scheme
+cv <- vfold_cv(stroke_training, v = 10, strata = stroke)
+
+# Define the model specification
+lr_spec <- logistic_reg() %>%
+  set_engine("glm") %>%
+  set_mode("classification")
+
+#create New Recipe
+
+Stroke_main2<-recipe(stroke~ 	hypertension,	heart_disease,metric_1	,metric_2,	metric_3,	metric_4	,metric_5	,data=stroke_training, family='binomial')%>%
+          step_YeoJohnson(all_numeric(), - all_outcomes()) %>% ##
+          step_dummy(all_nominal(), -all_outcomes()) %>%
+          step_nzv(all_predictors())
+
+
+# Define the workflow
+lr_wf <- workflow() %>%
+  add_model(lr_spec) %>%
+  add_recipe(Stroke_main2)
+
+# Fit and evaluate the model using cross-validation
+
+stroke_fit2 <- lr_wf %>%
+  fit_resamples(resamples = cv) %>%
+  collect_metrics()
+
+stroke_fit2
+
+```
+
+
+
+
